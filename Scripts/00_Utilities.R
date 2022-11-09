@@ -168,9 +168,9 @@ reshape_orgview <- function(.data, levels) {
     rename_with(.fn = ~str_replace(., "internal_id", "uid"),
                 .cols = contains("internal")) %>%
     mutate(orgunit_parent_level = as.character(as.integer(orgunit_level) - 1)) %>%
-    left_join(df_levels, by = c("orgunit_level" = "level")) %>%
+    left_join(levels, by = c("orgunit_level" = "level")) %>%
     rename(orgunit_label = label) %>%
-    left_join(df_levels, by = c("orgunit_parent_level" = "level")) %>%
+    left_join(levels, by = c("orgunit_parent_level" = "level")) %>%
     rename(orgunit_parent_label = label) %>%
     select(orgunit_parent_uid, orgunit_parent_name = orgunit_parent,
            orgunit_parent_level, orgunit_parent_label,
