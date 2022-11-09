@@ -25,6 +25,8 @@
   library(datimvalidation)
   library(datimutils)
   library(sqldf)
+  library(janitor)
+  library(glue)
   # library(readr)
   # library(dplyr)
   # library(purrr)
@@ -32,6 +34,7 @@
   # library(magrittr)
 
   source("../MerQL/Scripts/00_Utilities.R")
+  source("./Scripts/00_Utilities.R")
 
 # Credentials ----
 
@@ -45,9 +48,13 @@
   #list.files(dir_secrets, full.names = TRUE)
 
   # Get full path of secret file & initial login
-  file_secrets = file.path(dir_secrets, "secret.json")
+  #file_secrets = file.path(dir_secrets, "secret.json")
 
-  loginToDATIM(config_path = file_secrets)
+  #loginToDATIM(config_path = file_secrets)
+
+  loginToDATIM(username = glamr::datim_user(),
+               password = glamr::datim_pwd(),
+               base_url = "https://www.datim.org/")
 
 # Inputs files ----
 
@@ -76,18 +83,18 @@
   dir_down <- Sys.getenv("USERNAME") %>%
     paste0("C:/users/", ., "/Downloads")
 
-  dir_down <- Sys.getenv("USERPROFILE") %>%
-    file.path("Downloads")
-
-  if (extract2(Sys.getenv(), "sysname") != "Windows")
-    dir_down <- "~/Downloads"
+  # dir_down <- Sys.getenv("USERPROFILE") %>%
+  #   file.path("Downloads")
+  #
+  # if (extract2(Sys.getenv(), "sysname") != "Windows")
+  #   dir_down <- "~/Downloads"
 
   # Copy files to input directory
 
   list.files(path = dir_down,
-             pattern = "NHLMIS",
+             pattern = "flat.*file.*.csv$",
              full.names = TRUE) %>%
-    walk(~fs::file_copy(path = .x,
+    walk(~fs::file_move(path = .x,
                         new_path = file.path(dir_in, basename(.x))))
 
   # list files to be processed
@@ -95,12 +102,7 @@
                            pattern = ".*.csv$",
                            full.names = TRUE)
 
-  path = flat_files[1]
-
-
   # Split files by IM
-
-  #df_partners <- read_csv(file = path, col_types = "c")
 
   df_partners <- flat_files %>%
     map_dfr(function(.f){
@@ -118,15 +120,24 @@
       return(df_ff)
     })
 
+  # Confirm Structure
   df_partners %>% names()
-
   df_partners %>% glimpse()
 
+  # Reporting Periods - Calendar year
   df_partners %>% distinct(period)
 
+  # Partners
   df_partners %>% distinct(attributeoptioncombo)
 
   # Reference IMs Table
+
+  # Mechs doing flat files based Datim Import
+
+  ff_partners <- c("ACE") %>%
+    paste(1:6) %>%
+    append("RISE")
+
   df_ims <- tibble::tribble(
              ~uid,                                                                                                                 ~mechanism, ~mech_name,
     "dxmWiSFC4Ec",            "160521 - 72062022CA00004 - Accelerating Control of the HIV Epidemic in Nigeria - ACE 1: Adamawa, Borno & Yobe", "ACE 1",
@@ -138,14 +149,13 @@
     "MJjm3e0OKvy",                                        "81858 - 7200AA19CA00003 - Reaching Impact, Saturation and Epidemic Control (RISE)", "RISE"
     )
 
-  datim_sqlviews()
-
   df_mechview <- datim_mechview(query = list(ou = "Nigeria"))
 
   df_mechview <- df_mechview %>%
     filter(funding_agency == "USAID",
            str_detect(prime_partner, "^TBD", negate = T),
-           enddate >= lubridate::ymd("20211001"))
+           enddate >= lubridate::ymd("2021-10-01")) %>%
+    mech_acronyms()
 
   # Check validity of attributeoptioncombo
 
@@ -153,9 +163,32 @@
     distinct(attributeoptioncombo) %>%
     pull()
 
-  if(!all(partners %in% df_ims$uid)) {
+  df_rep_status <- df_partners %>%
+    distinct(attributeoptioncombo) %>%
+    right_join(df_mechview,
+               by = c("attributeoptioncombo" = "uid"),
+               keep = TRUE) %>%
+    mutate(status = case_when(
+      !is.na(attributeoptioncombo) & mech_shortname %in% ff_partners ~ "reported",
+      !is.na(attributeoptioncombo) & !mech_shortname %in% ff_partners ~ "should not report",
+      is.na(attributeoptioncombo) & mech_shortname %in% ff_partners ~ "did not report",
+      TRUE ~ "other"
+    )) %>%
+    filter(status != "other") %>%
+    select(attributeoptioncombo, mech_uid = uid, mech_name, mech_shortname, status)
+
+  rep_pending_partner <- df_rep_status %>%
+    filter(status == "did not report") %>%
+    pull(mech_shortname)
+
+  if(!all(partners %in% df_mechview$uid)) {
     usethis::ui_error(paste0("There are some invalid AttributeOptionCombo UIDs: ",
                             paste(setdiff(partners, df_ims$uid), collapse = ", ")))
+  }
+
+  if(length(rep_pending_partner) > 0) {
+    usethis::ui_warn(paste0("These partners did not report: ",
+                             paste(rep_pending_partner, collapse = ", ")))
   }
 
   # Split agency flat files into im specific
@@ -166,6 +199,7 @@
 # Process files ----
 
   # Process Parameters
+  cntry <- "Nigeria"
   type <- "csv"
   idScheme <- "id"
   dataElementIdScheme <- "id"
@@ -177,56 +211,107 @@
                          pattern = paste0(".*", tss, ".csv$"),
                          full.names = TRUE)
 
-  im_files
-
   # Get Data Sets UIDs
-  ds <- getCurrentDataSets()
+  ds <- getCurrentDataSets(datastream = "RESULTS")
 
-  # RULL 1 IM File at the time
-  # parse: checks for validations OU, DE, COC, AOC UIDs
-
+  # Validate files
   im_files %>%
     walk(~validate_submission(.sbm_file = .x,
                               sbm_type = "csv",
                               exclude_errors = TRUE,
                               id_scheme = "id"))
 
+# Convert flat files to msd outputs ----
 
-# Convert flat files to msd ----
+  # Reference datasets
 
-  # Get Reference datasets
-
+  # MER Current DataSets ----
   df_datasets <- datim_sqlviews(view_name = "Data sets", dataset = TRUE)
 
   df_datasets <- df_datasets %>%
     filter(str_detect(name, "^MER Results") & str_detect(name, ".*FY.*", negate = T))
 
+  # MER Data Elements ----
   df_deview <- df_datasets %>%
     pull(uid) %>%
     map_dfr(possibly(.f = ~datim_deview(datasetuid = .x),
                      otherwise = NULL))
 
-  df_deview %>% glimpse()
-
   df_deview <- df_deview %>%
     select(dataelementuid, dataelement = shortname,
            categoryoptioncombouid, categoryoptioncombo)
 
-  df_cocview <- datim_sqlviews(view_name = "MER category option combos", dataset = T)
+  # MER Category Option Combos ----
+  df_cocview <- datim_sqlviews(view_name = "MER category option combos",
+                               dataset = T)
 
-  df_aocview <- df_mechview
+  # MER Attribute Option Combos
+  df_aocview <- df_mechview %>%
+    select(mech_uid = uid, mech_code, mech_name, prime_partner)
 
-  # Load Processed datasets
+  # MER Org Units ----
+
+  # Org Levels
+  #df_levels <- get_cntry_levels(cntry, glamr::datim_user(), glamr::datim_pwd())
+  df_levels <- get_cntry_levels(cntry)
+
+  # Country
+  df_cntries <- datim_cntryview()
+
+  # Org Hierarchy
+  df_orgview <- df_cntries %>%
+    filter(orgunit_name == cntry) %>%
+    pull(orgunit_uid) %>%
+    datim_orgview(cntry_uid = .)
+
+  # Reshape OrgH.
+  df_orgview <- df_orgview %>%
+    reshape_orgview(df_levels)
+
+  df_orgview %>% distinct(orgunit_level)
+
+  # Update OrgH. - Add parent org in wide format
+  df_orgview <- df_orgview %>%
+    reshape_orgview(df_levels) %>%
+    update_orghierarchy(df_levels)
+
+
+  # Load Processed datasets ----
 
   file_imports <- list.files(path = dir_out,
-                           pattern = paste0(basename(dir_out), " - import.csv$"),
-                           full.names = TRUE)
+                             pattern = paste0(basename(dir_out), " - import.csv$"),
+                             full.names = TRUE)
 
   df_imports <- file_imports %>%
+    first() %>%
     map_dfr(read_csv, col_type = "c")
 
+  df_imports %>% glimpse()
+
   df_imports %>%
-    left_join(df_mechview, by = c("attributeoptioncombo" = "uid")) %>%
-    left_join(df_deview, by = c("dataelement" = "dataelementuid",
-                              "categoryoptioncombo" = "categoryoptioncombouid"))
+    convert_ff2msd(list(
+      orgview = df_orgview,
+      deview = df_deview,
+      aocview = df_aocview
+    ))
+
+  file_imports %>%
+    walk(function(.file) {
+
+      print(.file)
+
+      .df_import <- .file %>%
+        read_csv(col_type = "c") %>%
+        convert_ff2msd(list(
+          orgview = df_orgview,
+          deview = df_deview,
+          aocview = df_aocview
+        ))
+
+      write_csv(x = .df_import,
+                file = str_replace(.file, "import", "MSD Output"),
+                na = "")
+    })
+
+
 
