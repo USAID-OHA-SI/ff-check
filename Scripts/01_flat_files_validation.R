@@ -237,6 +237,8 @@
     map_dfr(possibly(.f = ~datim_deview(datasetuid = .x),
                      otherwise = NULL))
 
+  #df_deview %>% write_csv(file = "./Dataout/DATIM - MER Results Data Elements.csv")
+
   df_deview <- df_deview %>%
     select(dataelementuid, dataelement = shortname,
            categoryoptioncombouid, categoryoptioncombo)
@@ -244,6 +246,8 @@
   # MER Category Option Combos ----
   df_cocview <- datim_sqlviews(view_name = "MER category option combos",
                                dataset = T)
+
+  #df_cocview %>% write_csv(file = "./Dataout/DATIM - MER category option combos.csv")
 
   # MER Attribute Option Combos
   df_aocview <- df_mechview %>%
