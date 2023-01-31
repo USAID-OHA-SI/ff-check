@@ -49,7 +49,7 @@ split_out_inputs <- function(.data, ims, dir_out) {
     pull(attributeoptioncombo) %>%
     walk(function(.uid){
 
-      im <- df_ims %>%
+      im <- ims %>%
         filter(uid == .uid)
 
       if (nrow(im) == 1) {
@@ -115,13 +115,15 @@ validate_submission <- function(.sbm_file,
 
       df_test <- d$tests[[t]]
 
-      if (nrow(df_test) > 0) {
-        write_csv(
-          x = df_test,
-          file = file_error,
-          na = ""
-        )
+      if (!is.data.frame(df_test)) {
+        df_test <- as.data.frame(df_test)
       }
+
+      write_csv(
+        x = df_test,
+        file = file_error,
+        na = ""
+      )
     }
   }
 
@@ -164,15 +166,12 @@ reshape_orgview <- function(.data, levels) {
   # Add levels
   .data <- .data %>%
     filter(orgunit_level != min(orgunit_level)) %>%
-    select(-ends_with("code"), -moh_id, -starts_with("regionorcountry")) %>%
     rename_with(.fn = ~str_replace(., "internal_id", "uid"),
                 .cols = contains("internal")) %>%
     mutate(orgunit_parent_level = as.character(as.integer(orgunit_level) - 1)) %>%
     left_join(levels, by = c("orgunit_level" = "level")) %>%
-    rename(orgunit_label = label) %>%
     left_join(levels, by = c("orgunit_parent_level" = "level")) %>%
-    rename(orgunit_parent_label = label) %>%
-    select(orgunit_parent_uid, orgunit_parent_name = orgunit_parent,
+    select(orgunit_parent_uid, orgunit_parent_name,
            orgunit_parent_level, orgunit_parent_label,
            orgunit_uid, orgunit_name, orgunit_level, orgunit_label)
 

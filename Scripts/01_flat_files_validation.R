@@ -39,7 +39,7 @@
 # Credentials ----
 
   # Define directory for Datim Credentials files
-  dir_secrets <- "../../DATIM/.credentials"
+  #dir_secrets <- "../../DATIM/.credentials"
 
   # COPY below DATIM credentials into and text editor, update username / password, and save it as "secret.json" file
   #{"dhis": { "baseurl": "https://dev-de.datim.org/", "username": "admin", "password": "district" } }
@@ -52,9 +52,13 @@
 
   #loginToDATIM(config_path = file_secrets)
 
+  # loginToDATIM(username = glamr::datim_user(),
+  #              password = glamr::datim_pwd(),
+  #              base_url = "https://www.datim.org/")
+
   loginToDATIM(username = glamr::datim_user(),
                password = glamr::datim_pwd(),
-               base_url = "https://www.datim.org/")
+               base_url = "https://final.datim.org/")
 
 # Inputs files ----
 
@@ -74,9 +78,18 @@
 
   if(!dir.exists(dir_out)) dir.create(dir_out)
 
+  # Partners Submissions
+  # NOTE: Downloads and note partners names
+
+  ff_subms <- c("ACE", "RISE")
+
   # Flat fiels structures
-  req_cols <- c("dataelement", "period", "orgunit",
-                "categoryoptioncombo", "attributeoptioncombo", "value")
+  req_cols <- c("dataelement",
+                "period",
+                "orgunit",
+                "categoryoptioncombo",
+                "attributeoptioncombo",
+                "value")
 
   # Download and move files to input directory
 
@@ -92,7 +105,8 @@
   # Copy files to input directory
 
   list.files(path = dir_down,
-             pattern = "flat.*file.*.csv$",
+             #pattern = "flat.*file.*.csv$",
+             pattern = paste0(ff_subms, collapse = "|"),
              full.names = TRUE) %>%
     walk(~fs::file_move(path = .x,
                         new_path = file.path(dir_in, basename(.x))))
@@ -193,7 +207,9 @@
 
   # Split agency flat files into im specific
   df_partners %>%
-    split_out_inputs(ims = df_ims, dir_out = dir_out)
+    split_out_inputs(.data = .,
+                     ims = df_mechview,
+                     dir_out = dir_out)
 
 
 # Process files ----
@@ -204,7 +220,7 @@
   idScheme <- "id"
   dataElementIdScheme <- "id"
   orgUnitIdScheme <- "id"
-  expectedPeriod <- "2022Q3"
+  expectedPeriod <- "2022Q4"
 
   # list IM Flat files
   im_files <- list.files(dir_out,
@@ -213,6 +229,7 @@
 
   # Get Data Sets UIDs
   ds <- getCurrentDataSets(datastream = "RESULTS")
+  #ds <- datim_sqlviews(view_name = "Data sets", dataset = T)
 
   # Validate files
   im_files %>%
@@ -256,8 +273,8 @@
   # MER Org Units ----
 
   # Org Levels
-  #df_levels <- get_cntry_levels(cntry, glamr::datim_user(), glamr::datim_pwd())
-  df_levels <- get_cntry_levels(cntry)
+  #df_levels <- get_cntry_levels(cntry)
+  df_levels <- get_cntry_levels(cntry, glamr::datim_user(), glamr::datim_pwd())
 
   # Country
   df_cntries <- datim_cntryview()
@@ -272,13 +289,10 @@
   df_orgview <- df_orgview %>%
     reshape_orgview(df_levels)
 
-  df_orgview %>% distinct(orgunit_level)
-
   # Update OrgH. - Add parent org in wide format
   df_orgview <- df_orgview %>%
     reshape_orgview(df_levels) %>%
     update_orghierarchy(df_levels)
-
 
   # Load Processed datasets ----
 
@@ -286,18 +300,20 @@
                              pattern = paste0(basename(dir_out), " - import.csv$"),
                              full.names = TRUE)
 
-  df_imports <- file_imports %>%
-    first() %>%
-    map_dfr(read_csv, col_type = "c")
+  # df_imports <- file_imports %>%
+  #   first() %>%
+  #   map_dfr(read_csv, col_type = "c")
+  #
+  # df_imports %>% glimpse()
+  #
+  # df_imports %>%
+  #   convert_ff2msd(list(
+  #     orgview = df_orgview,
+  #     deview = df_deview,
+  #     aocview = df_aocview
+  #   ))
 
-  df_imports %>% glimpse()
-
-  df_imports %>%
-    convert_ff2msd(list(
-      orgview = df_orgview,
-      deview = df_deview,
-      aocview = df_aocview
-    ))
+  # Augment submissions
 
   file_imports %>%
     walk(function(.file) {
