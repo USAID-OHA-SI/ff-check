@@ -1,5 +1,5 @@
 # ff-check
-Flat files validation for Datim Import
+Flat files validation for Datim Import - typo
 
 ## Objective
 Facilitate and accelerate the pre-validation, reporting and analyses of `Datim Quarterly Data Submissions` from Implementing Partners. This should help country M&E Advisers do most of the checks and transformations locally as partners send in their reports. 
