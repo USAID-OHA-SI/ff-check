@@ -4,7 +4,7 @@
 ##  PURPOSE: USAID/Nigeria - Flat files pre-validations
 ##  LICENCE: MIT
 ##  DATE:    2022-10-31
-##  UPDATED: 2022-11-04
+##  UPDATED: 2023-11-01
 ##
 
 # Installation ----
@@ -75,7 +75,7 @@
   idScheme <- "id"
   dataElementIdScheme <- "id"
   orgUnitIdScheme <- "id"
-  expectedPeriod <- "2023Q2"
+  expectedPeriod <- "2023Q3"
 
 # Inputs files ----
 
@@ -100,7 +100,7 @@
   # Partners Submissions
   # NOTE: Downloads and note partners names
 
-  ff_subms <- c("FY23Q3_DATIM Flat File")
+  ff_subms <- c("FY23Q4_Flat_Files_Collated")
 
   # Flat fiels structures
   req_cols <- c("dataelement",
@@ -153,9 +153,14 @@
       return(df_ff)
     })
 
+
+
   # Confirm Structure
   df_partners %>% names()
   df_partners %>% glimpse()
+
+  df_partners <- df_partners %>%
+    rename(attributeoptioncombo = attroptioncombo)
 
   # Reporting Periods - Calendar year
   df_partners %>% distinct(period)
@@ -191,6 +196,7 @@
     append(paste0("KP CARE ", 1:2))
 
   ff_partners
+
   df_mechs$mech_shortname
 
   df_mechs <- df_mechs %>%
@@ -299,7 +305,9 @@
   # Reference datasets
 
   # MER Current DataSets ----
-  df_datasets <- datim_sqlviews(view_name = "Data sets",
+  df_datasets <- datim_sqlviews(username = datim_user(),
+                                password = datim_pwd(),
+                                view_name = "Data sets",
                                 dataset = TRUE,
                                 base_url = url)
 
@@ -313,7 +321,10 @@
   # MER Data Elements ----
   df_deview <- df_datasets %>%
     pull(uid) %>%
-    map_dfr(possibly(.f = ~datim_deview(datasetuid = .x, base_url = url),
+    map_dfr(possibly(.f = ~datim_deview(username = datim_user(),
+                                        password = datim_pwd(),
+                                        datasetuid = .x,
+                                        base_url = url),
                      otherwise = NULL))
 
   #df_deview %>% write_csv(file = "./Dataout/DATIM - MER Results Data Elements.csv")
@@ -323,33 +334,39 @@
            categoryoptioncombouid, categoryoptioncombo)
 
   # MER Category Option Combos ----
-  df_cocview <- datim_sqlviews(view_name = "MER category option combos",
+  df_cocview <- datim_sqlviews(username = datim_user(),
+                               password = datim_pwd(),
+                               view_name = "MER category option combos",
                                dataset = T,
                                base_url = url)
 
   #df_cocview %>% write_csv(file = "./Dataout/DATIM - MER category option combos.csv")
 
   # MER Attribute Option Combos
-  df_aocview <- df_mechview %>%
+  df_aocview <- df_mechs %>%
     select(mech_uid = uid, mech_code, mech_name, prime_partner)
 
   # MER Org Units ----
 
   # Org Levels
   #df_levels <- get_cntry_levels(cntry)
-  df_levels <- get_cntry_levels(cntry,
+  df_levels <- get_cntry_levels(cntry = cntry,
                                 glamr::datim_user(),
                                 glamr::datim_pwd(),
                                 base_url = paste0(url, "/"))
 
   # Country
-  df_cntries <- datim_cntryview(base_url = url)
+  df_cntries <- datim_cntryview(username = datim_user(),
+                                password = datim_pwd(),
+                                base_url = url)
 
   # Org Hierarchy
   df_orgview <- df_cntries %>%
     filter(orgunit_name == cntry) %>%
     pull(orgunit_uid) %>%
-    datim_orgview(cntry_uid = .)
+    datim_orgview(username = datim_user(),
+                  password = datim_pwd(),
+                  cntry_uid = .)
 
   # Update OrgH. - Add parent org in wide format
 
