@@ -139,9 +139,14 @@ validate_submission <- function(.sbm_file,
 #' @title Pull Org Levels
 #'
 #'
-get_cntry_levels <- function(cntry, username=NULL, password=NULL){
+get_cntry_levels <- function(cntry,
+                             username=NULL,
+                             password=NULL,
+                             base_url = NULL){
 
-  .levels <- grabr::get_levels(username = username, password = password)
+  .levels <- grabr::get_levels(username = username,
+                               password = password,
+                               baseurl = base_url)
 
   .levels <- .levels %>%
     filter(countryname == cntry) %>%
@@ -163,17 +168,30 @@ get_cntry_levels <- function(cntry, username=NULL, password=NULL){
 #'
 reshape_orgview <- function(.data, levels) {
 
-  # Add levels
+  # Rename and clean
   .data <- .data %>%
+    # Remove top level orgunit [OU/Country]
     filter(orgunit_level != min(orgunit_level)) %>%
+    # Rename uid columns
+    rename(orgunit_parent_name = orgunit_parent) %>%
     rename_with(.fn = ~str_replace(., "internal_id", "uid"),
                 .cols = contains("internal")) %>%
-    mutate(orgunit_parent_level = as.character(as.integer(orgunit_level) - 1)) %>%
+    # Update level column type to chr
+    mutate(orgunit_level = as.character(orgunit_level),
+           orgunit_parent_level = as.character(as.integer(orgunit_level) - 1)) %>%
+    # Identify orgunit and parent levels
     left_join(levels, by = c("orgunit_level" = "level")) %>%
+    rename(orgunit_label = label) %>%
     left_join(levels, by = c("orgunit_parent_level" = "level")) %>%
-    select(orgunit_parent_uid, orgunit_parent_name,
-           orgunit_parent_level, orgunit_parent_label,
-           orgunit_uid, orgunit_name, orgunit_level, orgunit_label)
+    rename(orgunit_parent_label = label) %>%
+    # Re-order columns
+    select(regionorcountry_code, regionorcountry_name,
+           orgunit_uid, orgunit_name, orgunit_level, orgunit_label,
+           orgunit_parent_uid, orgunit_parent_name,
+           orgunit_parent_level, orgunit_parent_label)
+
+  # .data <- .data %>%
+  #   select(orgunit_uid, orgunit_parent_uid, orgunit_name)
 
   # Map Child to Parent Orgs
   .df_org <- .data %>%
@@ -181,13 +199,22 @@ reshape_orgview <- function(.data, levels) {
                by = c("orgunit_parent_uid" = "orgunit_uid"),
                suffix = c("", "_top"))
 
+  #return(.df_org)
+
   # Append non-matched Orgs - Optional
-  .data %>%
+  .data <- .data %>%
     anti_join(.df_org) %>%
-    bind_rows(.df_org, .) %>%
-    select(matches(".*_parent_.*_top"),
-           matches(".*_parent_.*"),
+    bind_rows(.df_org, .)
+
+  # Re-order and return
+  #.df_org %>%
+  .data %>%
+    select(regionorcountry_code, regionorcountry_name,
+           orgunit_uid, orgunit_name,
+           orgunit_level, orgunit_label,
            matches("^orgunit_.*_top"),
+           matches("^orgunit_parent_.*"),
+           matches("^orgunit_parent_.*_top"),
            everything())
 }
 

@@ -22,10 +22,13 @@
 # Libraries ----
 
   library(tidyverse)
+  library(grabr)
+  library(glamr)
   library(datimvalidation)
   library(datimutils)
   library(sqldf)
   library(janitor)
+  library(lubridate)
   library(glue)
   # library(readr)
   # library(dplyr)
@@ -52,19 +55,35 @@
 
   #loginToDATIM(config_path = file_secrets)
 
-  # loginToDATIM(username = glamr::datim_user(),
-  #              password = glamr::datim_pwd(),
-  #              base_url = "https://www.datim.org/")
+  url <- "https://www.datim.org"
 
-  loginToDATIM(username = glamr::datim_user(),
-               password = glamr::datim_pwd(),
-               base_url = "https://final.datim.org/")
+  loginToDATIM(
+    username = glamr::datim_user(),
+    password = glamr::datim_pwd(),
+    #base_url = "https://final.datim.org/" # Not always in sync
+    base_url = paste0(url, "/")
+  )
+
+# Options
+
+  # Agency / OU
+  agency <- "USAID"
+  cntry <- "Nigeria"
+
+  # Process Parameters
+  type <- "csv"
+  idScheme <- "id"
+  dataElementIdScheme <- "id"
+  orgUnitIdScheme <- "id"
+  expectedPeriod <- "2023Q2"
 
 # Inputs files ----
 
   # Processing Time Stamp
-  ts <- format(Sys.time(), "%Y%m%d%H%M%S")
-  tss <- format(Sys.time(), "%Y-%m-%d %H%M%S")
+  t <- Sys.time()
+  today <- t %>% format("%Y-%m-%d")
+  ts <- t %>% format("%Y%m%d%H%M%S")
+  tss <- t %>% format("%Y-%m-%d %H%M%S")
 
   # Input Files Directory
   dir_in <- "./Data/"
@@ -81,7 +100,7 @@
   # Partners Submissions
   # NOTE: Downloads and note partners names
 
-  ff_subms <- c("ACE", "RISE")
+  ff_subms <- c("FY23Q3_DATIM Flat File")
 
   # Flat fiels structures
   req_cols <- c("dataelement",
@@ -148,28 +167,38 @@
 
   # Mechs doing flat files based Datim Import
 
+  df_mechs <- datim_mechview(
+    username = datim_user(),
+    password = datim_pwd(),
+    query = list(
+      type = "variable",
+      params = list(ou = "Nigeria")
+    )
+  )
+
+  df_mechs <- df_mechs %>%
+    filter(funding_agency == agency,
+           operatingunit == cntry,
+           !is.na(prime_partner),
+           str_detect(prime_partner, "Dedupe|TBD", negate = TRUE),
+           ymd(enddate) > ymd(today)) %>%
+    select(uid, mech_code, mech_name, prime_partner) %>%
+    mech_acronyms()
+
   ff_partners <- c("ACE") %>%
     paste(1:6) %>%
-    append("RISE")
+    append("RISE") %>%
+    append(paste0("KP CARE ", 1:2))
 
-  df_ims <- tibble::tribble(
-             ~uid,                                                                                                                 ~mechanism, ~mech_name,
-    "dxmWiSFC4Ec",            "160521 - 72062022CA00004 - Accelerating Control of the HIV Epidemic in Nigeria - ACE 1: Adamawa, Borno & Yobe", "ACE 1",
-    "ZlQLnKsU2hp",   "160522 - 72062022CA00005 - Accelerating Control of the HIV Epidemic in Nigeria - ACE 2, Bauchi, Kano and Jigawa States", "ACE 2",
-    "bSG3l4iz5o0",       "160523 - 72062022CA00003 - Accelerating Control of the HIV Epidemic in Nigeria ACE 3, - Kebbi, Sokoto and Zamfara.", "ACE 3",
-    "adMgu5xx9EN",          "160524 - 72062022CA00006 - Accelerating Control of the HIV Epidemic in Nigeria - ACE 4, Kwara and Niger States.", "ACE 4",
-    "v1kPnv5KfhH",                "160525 - 72062022CA00002 - Accelerating Control of the HIV Epidemic in Nigeria - 6 Lagos, Edo and Bayelsa", "ACE 6",
-    "mYAtSbuTcTX", "160527 - 72062022CA00007 - Accelerating Control of the HIV Epidemic in Nigeria - ACE 5, Akwa-Ibom and Cross-River States", "ACE 5",
-    "MJjm3e0OKvy",                                        "81858 - 7200AA19CA00003 - Reaching Impact, Saturation and Epidemic Control (RISE)", "RISE"
-    )
+  ff_partners
+  df_mechs$mech_shortname
 
-  df_mechview <- datim_mechview(query = list(ou = "Nigeria"))
+  df_mechs <- df_mechs %>%
+    filter(mech_shortname %in% ff_partners)
 
-  df_mechview <- df_mechview %>%
-    filter(funding_agency == "USAID",
-           str_detect(prime_partner, "^TBD", negate = T),
-           enddate >= lubridate::ymd("2021-10-01")) %>%
-    mech_acronyms()
+  if (!any(pull(df_partners %>% distinct(attributeoptioncombo)) %in% df_mechs$uid)) {
+    usethis::ui_warn("Unknown partner uid was detected")
+  }
 
   # Check validity of attributeoptioncombo
 
@@ -179,7 +208,7 @@
 
   df_rep_status <- df_partners %>%
     distinct(attributeoptioncombo) %>%
-    right_join(df_mechview,
+    right_join(df_mechs,
                by = c("attributeoptioncombo" = "uid"),
                keep = TRUE) %>%
     mutate(status = case_when(
@@ -195,11 +224,13 @@
     filter(status == "did not report") %>%
     pull(mech_shortname)
 
-  if(!all(partners %in% df_mechview$uid)) {
+  # Flag Invalid Partners
+  if(!all(partners %in% df_mechs$uid)) {
     usethis::ui_error(paste0("There are some invalid AttributeOptionCombo UIDs: ",
                             paste(setdiff(partners, df_ims$uid), collapse = ", ")))
   }
 
+  # Flag Pending Partners
   if(length(rep_pending_partner) > 0) {
     usethis::ui_warn(paste0("These partners did not report: ",
                              paste(rep_pending_partner, collapse = ", ")))
@@ -208,19 +239,11 @@
   # Split agency flat files into im specific
   df_partners %>%
     split_out_inputs(.data = .,
-                     ims = df_mechview,
+                     ims = df_mechs,
                      dir_out = dir_out)
 
 
 # Process files ----
-
-  # Process Parameters
-  cntry <- "Nigeria"
-  type <- "csv"
-  idScheme <- "id"
-  dataElementIdScheme <- "id"
-  orgUnitIdScheme <- "id"
-  expectedPeriod <- "2022Q4"
 
   # list IM Flat files
   im_files <- list.files(dir_out,
@@ -228,8 +251,12 @@
                          full.names = TRUE)
 
   # Get Data Sets UIDs
-  ds <- getCurrentDataSets(datastream = "RESULTS")
-  #ds <- datim_sqlviews(view_name = "Data sets", dataset = T)
+
+  #ds <- getCurrentDataSets(datastream = "RESULTS")
+  # ds <- datim_sqlviews(username = datim_user(),
+  #                      password = datim_pwd(),
+  #                      view_name = "Data sets",
+  #                      dataset = T)
 
   # Validate files
   im_files %>%
@@ -238,12 +265,47 @@
                               exclude_errors = TRUE,
                               id_scheme = "id"))
 
+  ## Summarise messages
+  list.files(dir_out,
+             pattern = paste0(".*", tss, " - messages.csv$"),
+             full.names = TRUE) %>%
+    map_dfr(function(.x){
+      read_csv(.x) %>%
+        mutate(im = str_extract(basename(.x), paste0(".*(?= - ", tss, ")"))) %>%
+        relocate(im, .before = 1)
+    }) %>%
+    write_csv(
+      file = paste0(dir_out, "USAID Partners - ", tss, " - message summary.csv"),
+      na = ""
+    )
+
+  ## Summarise validations rules
+  list.files(dir_out,
+             pattern = paste0(".*", tss, " - TESTS - validation_rules.csv$"),
+             full.names = TRUE) %>%
+    map_dfr(function(.x){
+      read_csv(.x, col_types = "c") %>%
+        mutate(im = str_extract(basename(.x), paste0(".*(?= - ", tss, ")"))) %>%
+        mutate(across(everything(), as.character)) %>%
+        relocate(im, .before = 1)
+    }) %>%
+    write_csv(
+      file = paste0(dir_out, "USAID Partners - ", tss, " - TESTS - validation_rules summary.csv"),
+      na = ""
+    )
+
 # Convert flat files to msd outputs ----
 
   # Reference datasets
 
   # MER Current DataSets ----
-  df_datasets <- datim_sqlviews(view_name = "Data sets", dataset = TRUE)
+  df_datasets <- datim_sqlviews(view_name = "Data sets",
+                                dataset = TRUE,
+                                base_url = url)
+
+  df_datasets %>%
+    distinct(name) %>%
+    pull()
 
   df_datasets <- df_datasets %>%
     filter(str_detect(name, "^MER Results") & str_detect(name, ".*FY.*", negate = T))
@@ -251,7 +313,7 @@
   # MER Data Elements ----
   df_deview <- df_datasets %>%
     pull(uid) %>%
-    map_dfr(possibly(.f = ~datim_deview(datasetuid = .x),
+    map_dfr(possibly(.f = ~datim_deview(datasetuid = .x, base_url = url),
                      otherwise = NULL))
 
   #df_deview %>% write_csv(file = "./Dataout/DATIM - MER Results Data Elements.csv")
@@ -262,7 +324,8 @@
 
   # MER Category Option Combos ----
   df_cocview <- datim_sqlviews(view_name = "MER category option combos",
-                               dataset = T)
+                               dataset = T,
+                               base_url = url)
 
   #df_cocview %>% write_csv(file = "./Dataout/DATIM - MER category option combos.csv")
 
@@ -274,10 +337,13 @@
 
   # Org Levels
   #df_levels <- get_cntry_levels(cntry)
-  df_levels <- get_cntry_levels(cntry, glamr::datim_user(), glamr::datim_pwd())
+  df_levels <- get_cntry_levels(cntry,
+                                glamr::datim_user(),
+                                glamr::datim_pwd(),
+                                base_url = paste0(url, "/"))
 
   # Country
-  df_cntries <- datim_cntryview()
+  df_cntries <- datim_cntryview(base_url = url)
 
   # Org Hierarchy
   df_orgview <- df_cntries %>%
@@ -285,11 +351,8 @@
     pull(orgunit_uid) %>%
     datim_orgview(cntry_uid = .)
 
-  # Reshape OrgH.
-  df_orgview <- df_orgview %>%
-    reshape_orgview(df_levels)
-
   # Update OrgH. - Add parent org in wide format
+
   df_orgview <- df_orgview %>%
     reshape_orgview(df_levels) %>%
     update_orghierarchy(df_levels)
@@ -300,20 +363,26 @@
                              pattern = paste0(basename(dir_out), " - import.csv$"),
                              full.names = TRUE)
 
-  # df_imports <- file_imports %>%
-  #   first() %>%
-  #   map_dfr(read_csv, col_type = "c")
-  #
-  # df_imports %>% glimpse()
-  #
-  # df_imports %>%
-  #   convert_ff2msd(list(
-  #     orgview = df_orgview,
-  #     deview = df_deview,
-  #     aocview = df_aocview
-  #   ))
+  df_imports <- file_imports %>%
+    map_dfr(function(.file) {
+      read_csv(.file, col_type = "c") %>%
+        mutate(filename = basename(.file))
+    })
 
-  # Augment submissions
+  # df_imports %>% glimpse()
+  # df_imports %>% distinct(filename)
+
+  df_inputs <- list.files(path = dir_in,
+               pattern = ".csv$",
+               full.names = TRUE) %>%
+    map_dfr(function(.file) {
+      read_csv(.file, col_type = "c") %>%
+        rename_with(~tolower(.)) %>%
+        mutate(filename = basename(.file))
+    })
+
+
+  # Augment individual submissions
 
   file_imports %>%
     walk(function(.file) {
@@ -333,5 +402,18 @@
                 na = "")
     })
 
+  # Augment aggregated submissions
 
+  df_imports %>%
+    convert_ff2msd(list(
+      orgview = df_orgview,
+      deview = df_deview,
+      aocview = df_aocview
+    )) %>%
+    write_csv(x = .,
+              file = file.path(
+                dir_out,
+                paste0(cntry, " - ", expectedPeriod, " - MSD Output.csv")
+              ),
+              na = "")
 
