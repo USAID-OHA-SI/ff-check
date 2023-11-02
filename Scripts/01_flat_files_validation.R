@@ -124,7 +124,10 @@
   # Copy files to input directory
 
   list.files(path = dir_down,
-             #pattern = "flat.*file.*.csv$",
+             pattern = paste0(ff_subms, collapse = "|"),
+             full.names = TRUE)
+
+  list.files(path = dir_down,
              pattern = paste0(ff_subms, collapse = "|"),
              full.names = TRUE) %>%
     walk(~fs::file_move(path = .x,
