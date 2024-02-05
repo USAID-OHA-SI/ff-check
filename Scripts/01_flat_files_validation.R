@@ -30,11 +30,6 @@
   library(janitor)
   library(lubridate)
   library(glue)
-  # library(readr)
-  # library(dplyr)
-  # library(purrr)
-  # library(stringr)
-  # library(magrittr)
 
   source("../MerQL/Scripts/00_Utilities.R")
   source("./Scripts/00_Utilities.R")
@@ -75,7 +70,7 @@
   idScheme <- "id"
   dataElementIdScheme <- "id"
   orgUnitIdScheme <- "id"
-  expectedPeriod <- "2023Q3"
+  expectedPeriod <- "2023Q4"
 
 # Inputs files ----
 
@@ -100,7 +95,7 @@
   # Partners Submissions
   # NOTE: Downloads and note partners names
 
-  ff_subms <- c("FY23Q4_Flat_Files_Collated")
+  ff_subms <- c("FY24Q1_*")
 
   # Flat fiels structures
   req_cols <- c("dataelement",
@@ -115,13 +110,10 @@
   dir_down <- Sys.getenv("USERNAME") %>%
     paste0("C:/users/", ., "/Downloads")
 
-  # dir_down <- Sys.getenv("USERPROFILE") %>%
-  #   file.path("Downloads")
-  #
   # if (extract2(Sys.getenv(), "sysname") != "Windows")
   #   dir_down <- "~/Downloads"
 
-  # Copy files to input directory
+  # Move input files from download to input directory
 
   list.files(path = dir_down,
              pattern = paste0(ff_subms, collapse = "|"),
@@ -162,8 +154,10 @@
   df_partners %>% names()
   df_partners %>% glimpse()
 
-  df_partners <- df_partners %>%
-    rename(attributeoptioncombo = attroptioncombo)
+  setdiff(req_cols, df_partners %>% names())
+
+  # df_partners <- df_partners %>%
+  #   rename(attributeoptioncombo = attroptioncombo)
 
   # Reporting Periods - Calendar year
   df_partners %>% distinct(period)
@@ -175,32 +169,28 @@
 
   # Mechs doing flat files based Datim Import
 
-  df_mechs <- datim_mechview(
-    username = datim_user(),
-    password = datim_pwd(),
-    query = list(
-      type = "variable",
-      params = list(ou = "Nigeria")
-    )
-  )
+  df_mechs <- datim_mechs(cntry = cntry,
+                          agency = agency,
+                          username = datim_user(),
+                          password = datim_pwd())
 
   df_mechs <- df_mechs %>%
-    filter(funding_agency == agency,
-           operatingunit == cntry,
-           !is.na(prime_partner),
-           str_detect(prime_partner, "Dedupe|TBD", negate = TRUE),
+    filter(!is.na(prime_partner_name),
+           str_detect(prime_partner_name, "Dedupe|TBD", negate = TRUE),
            ymd(enddate) > ymd(today)) %>%
-    select(uid, mech_code, mech_name, prime_partner) %>%
+    select(uid, mech_code, mech_name, prime_partner_name) %>%
     mech_acronyms()
 
+  df_mechs %>%
+    distinct(mech_shortname) %>%
+    arrange(mech_shortname) %>%
+    prinf()
+
+  # Partners doing
   ff_partners <- c("ACE") %>%
     paste(1:6) %>%
     append("RISE") %>%
     append(paste0("KP CARE ", 1:2))
-
-  ff_partners
-
-  df_mechs$mech_shortname
 
   df_mechs <- df_mechs %>%
     filter(mech_shortname %in% ff_partners)
@@ -259,14 +249,6 @@
                          pattern = paste0(".*", tss, ".csv$"),
                          full.names = TRUE)
 
-  # Get Data Sets UIDs
-
-  #ds <- getCurrentDataSets(datastream = "RESULTS")
-  # ds <- datim_sqlviews(username = datim_user(),
-  #                      password = datim_pwd(),
-  #                      view_name = "Data sets",
-  #                      dataset = T)
-
   # Validate files
   im_files %>%
     walk(~validate_submission(.sbm_file = .x,
@@ -274,34 +256,23 @@
                               exclude_errors = TRUE,
                               id_scheme = "id"))
 
-  ## Summarise messages
-  list.files(dir_out,
-             pattern = paste0(".*", tss, " - messages.csv$"),
-             full.names = TRUE) %>%
-    map_dfr(function(.x){
-      read_csv(.x) %>%
-        mutate(im = str_extract(basename(.x), paste0(".*(?= - ", tss, ")"))) %>%
-        relocate(im, .before = 1)
-    }) %>%
-    write_csv(
-      file = paste0(dir_out, "USAID Partners - ", tss, " - message summary.csv"),
-      na = ""
+  ## Merge messages
+  dir_out %>%
+    merge_outputs(
+      .dir = .,
+      ptime = tss,
+      otype = "messages"
     )
 
-  ## Summarise validations rules
-  list.files(dir_out,
-             pattern = paste0(".*", tss, " - TESTS - validation_rules.csv$"),
-             full.names = TRUE) %>%
-    map_dfr(function(.x){
-      read_csv(.x, col_types = "c") %>%
-        mutate(im = str_extract(basename(.x), paste0(".*(?= - ", tss, ")"))) %>%
-        mutate(across(everything(), as.character)) %>%
-        relocate(im, .before = 1)
-    }) %>%
-    write_csv(
-      file = paste0(dir_out, "USAID Partners - ", tss, " - TESTS - validation_rules summary.csv"),
-      na = ""
+
+  ## Merge validations rules
+  dir_out %>%
+    merge_outputs(
+      .dir = .,
+      ptime = tss,
+      otype = "TESTS - validation_rules"
     )
+
 
 # Convert flat files to msd outputs ----
 
@@ -347,35 +318,18 @@
 
   # MER Attribute Option Combos
   df_aocview <- df_mechs %>%
-    select(mech_uid = uid, mech_code, mech_name, prime_partner)
+    select(mech_uid = uid, mech_code, mech_name, prime_partner_name)
 
   # MER Org Units ----
 
-  # Org Levels
-  #df_levels <- get_cntry_levels(cntry)
-  df_levels <- get_cntry_levels(cntry = cntry,
-                                glamr::datim_user(),
-                                glamr::datim_pwd(),
-                                base_url = paste0(url, "/"))
-
-  # Country
-  df_cntries <- datim_cntryview(username = datim_user(),
-                                password = datim_pwd(),
-                                base_url = url)
-
-  # Org Hierarchy
-  df_orgview <- df_cntries %>%
-    filter(orgunit_name == cntry) %>%
-    pull(orgunit_uid) %>%
-    datim_orgview(username = datim_user(),
-                  password = datim_pwd(),
-                  cntry_uid = .)
-
-  # Update OrgH. - Add parent org in wide format
+  df_orgview <- grabr::datim_orgunits(cntry = cntry,
+                                      username = datim_user(),
+                                      password = datim_pwd(),
+                                      reshape = TRUE)
 
   df_orgview <- df_orgview %>%
-    reshape_orgview(df_levels) %>%
-    update_orghierarchy(df_levels)
+    select(-c(moh_id, orgunit_code, countryuid, matches(".*_level"))) %>%
+    select(operatingunit, country, everything())
 
   # Load Processed datasets ----
 
