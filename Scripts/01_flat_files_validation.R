@@ -31,7 +31,7 @@
   library(lubridate)
   library(glue)
 
-  source("../MerQL/Scripts/00_Utilities.R")
+  #source("../MerQL/Scripts/00_Utilities.R")
   source("./Scripts/00_Utilities.R")
 
 # Credentials ----
@@ -50,7 +50,8 @@
 
   #loginToDATIM(config_path = file_secrets)
 
-  url <- "https://www.datim.org"
+  #url <- "https://www.datim.org"
+  url <- "https://final.datim.org"
 
   loginToDATIM(
     username = glamr::datim_user(),
@@ -70,7 +71,7 @@
   idScheme <- "id"
   dataElementIdScheme <- "id"
   orgUnitIdScheme <- "id"
-  expectedPeriod <- "2023Q4"
+  expectedPeriod <- "2024Q2"
 
 # Inputs files ----
 
@@ -95,7 +96,7 @@
   # Partners Submissions
   # NOTE: Downloads and note partners names
 
-  ff_subms <- c("FY24Q1_*")
+  ff_subms <- c("FY24Q3_*")
 
   # Flat fiels structures
   req_cols <- c("dataelement",
@@ -107,6 +108,8 @@
 
   # Download and move files to input directory
 
+
+
   dir_down <- Sys.getenv("USERNAME") %>%
     paste0("C:/users/", ., "/Downloads")
 
@@ -114,6 +117,8 @@
   #   dir_down <- "~/Downloads"
 
   # Move input files from download to input directory
+
+  #dir_down <- "../../PEPFAR/COUNTRIES/Nigeria/Data/FlatFiles/FY24Q3/Initial"
 
   list.files(path = dir_down,
              pattern = paste0(ff_subms, collapse = "|"),
@@ -156,11 +161,22 @@
 
   setdiff(req_cols, df_partners %>% names())
 
-  # df_partners <- df_partners %>%
-  #   rename(attributeoptioncombo = attroptioncombo)
+  df_partners <- df_partners %>%
+    rename(attributeoptioncombo = attroptioncombo)
 
   # Reporting Periods - Calendar year
   df_partners %>% distinct(period)
+
+  df_partners %>%
+    distinct(period) %>%
+    pull() %>%
+    length() %>%
+    magrittr::equals(1)
+
+  df_partners %>%
+    distinct(period) %>%
+    pull() %>%
+    magrittr::is_in(expectedPeriod, .)
 
   # Partners
   df_partners %>% distinct(attributeoptioncombo)
@@ -283,7 +299,7 @@
                                 password = datim_pwd(),
                                 view_name = "Data sets",
                                 dataset = TRUE,
-                                base_url = url)
+                                baseurl = url)
 
   df_datasets %>%
     distinct(name) %>%
@@ -293,12 +309,18 @@
     filter(str_detect(name, "^MER Results") & str_detect(name, ".*FY.*", negate = T))
 
   # MER Data Elements ----
+  datim_deview(username = datim_user(),
+               password = datim_pwd(),
+               datasetuid = "RJMs1rX3GA5"
+              # baseurl = url
+               )
+
   df_deview <- df_datasets %>%
-    pull(uid) %>%
+    pull(uid) %>% #first() %>%
     map_dfr(possibly(.f = ~datim_deview(username = datim_user(),
                                         password = datim_pwd(),
                                         datasetuid = .x,
-                                        base_url = url),
+                                        baseurl = url),
                      otherwise = NULL))
 
   #df_deview %>% write_csv(file = "./Dataout/DATIM - MER Results Data Elements.csv")
