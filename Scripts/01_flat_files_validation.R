@@ -4,7 +4,7 @@
 ##  PURPOSE: USAID/Nigeria - Flat files pre-validations
 ##  LICENCE: MIT
 ##  DATE:    2022-10-31
-##  UPDATED: 2023-11-01
+##  UPDATED: 2024-11-04
 ##
 
 # Installation ----
@@ -71,9 +71,16 @@
   idScheme <- "id"
   dataElementIdScheme <- "id"
   orgUnitIdScheme <- "id"
-  expectedPeriod <- "2024Q2"
+  expectedPeriod <- "2024Q3"
 
 # Inputs files ----
+
+  # DIRs - Reference files
+
+  dir_pepfar <- si_path("path_datim")
+
+  file_mechs <- "./../../DATIM/Data-Import-and-Exchange-Resources" %>%
+    return_latest(".*Mechanisms partners.*.csv")
 
   # Processing Time Stamp
   t <- Sys.time()
@@ -96,7 +103,7 @@
   # Partners Submissions
   # NOTE: Downloads and note partners names
 
-  ff_subms <- c("FY24Q3_*")
+  ff_subms <- c("FY24Q4_*")
 
   # Flat fiels structures
   req_cols <- c("dataelement",
@@ -162,7 +169,8 @@
   setdiff(req_cols, df_partners %>% names())
 
   df_partners <- df_partners %>%
-    rename(attributeoptioncombo = attroptioncombo)
+    #rename(attributeoptioncombo = attroptioncombo)
+    rename(orgunit = `org unit`, dataelement = dataelementid)
 
   # Reporting Periods - Calendar year
   df_partners %>% distinct(period)
@@ -181,16 +189,27 @@
   # Partners
   df_partners %>% distinct(attributeoptioncombo)
 
+  partners_uid <- df_partners %>%
+    distinct(attributeoptioncombo) %>%
+    pull()
+
   # Reference IMs Table
 
   # Mechs doing flat files based Datim Import
 
-  df_mechs <- datim_mechs(cntry = cntry,
-                          agency = agency,
-                          username = datim_user(),
-                          password = datim_pwd())
+  # df_mechs <- datim_mechs(cntry = cntry,
+  #                         agency = agency,
+  #                         username = datim_user(),
+  #                         password = datim_pwd())
+
+  df_mechs <- file_mechs %>% read_csv()
+
+  df_mechs %>% glimpse()
 
   df_mechs <- df_mechs %>%
+    rename(prime_partner_name = partner,
+           mech_name = mechanism,
+           mech_code = code) %>%
     filter(!is.na(prime_partner_name),
            str_detect(prime_partner_name, "Dedupe|TBD", negate = TRUE),
            ymd(enddate) > ymd(today)) %>%
@@ -209,7 +228,10 @@
     append(paste0("KP CARE ", 1:2))
 
   df_mechs <- df_mechs %>%
-    filter(mech_shortname %in% ff_partners)
+    filter(uid %in% partners_uid)
+
+  # df_mechs <- df_mechs %>%
+  #   filter(mech_shortname %in% ff_partners)
 
   if (!any(pull(df_partners %>% distinct(attributeoptioncombo)) %in% df_mechs$uid)) {
     usethis::ui_warn("Unknown partner uid was detected")
@@ -241,8 +263,8 @@
 
   # Flag Invalid Partners
   if(!all(partners %in% df_mechs$uid)) {
-    usethis::ui_error(paste0("There are some invalid AttributeOptionCombo UIDs: ",
-                            paste(setdiff(partners, df_ims$uid), collapse = ", ")))
+    usethis::ui_warn(paste0("There are some invalid AttributeOptionCombo UIDs: ",
+                            paste(setdiff(partners, df_mechs$uid), collapse = ", ")))
   }
 
   # Flag Pending Partners
