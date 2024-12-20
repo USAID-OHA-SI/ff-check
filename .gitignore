@@ -68,6 +68,21 @@ vignettes/*.pdf
 *.shp
 *.dbf
 
+# SQLlite
+*.db
+*.db3
+*.s3db
+*.sl3
+*.ddb
+*.sqlite
+*.sqlite3
+
+# DuckDB Specific files
+*.ddb*
+*.duckdb*
+*.wal
+*.tmp/
+
 #nothing from these folders
 AI/*
 GIS/*
