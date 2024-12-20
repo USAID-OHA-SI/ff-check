@@ -52,6 +52,7 @@ vignettes/*.pdf
 *.png
 *.twbx
 *.pptx
+*.parquet
 
 #nothing from these folders
 AI/*
