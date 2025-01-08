@@ -42,20 +42,51 @@ vignettes/*.pdf
 .Rhistory
 .RData
 .Ruserdata
+
 #no data
 *.csv
+*.gz
 *.txt
 *.rds
 *.xlsx
 *.xls
 *.zip
 *.png
-*.twbx
 *.pptx
+*.tfl
+*.twb
+*.twbx
+*.tbs
+*.tbm
+*.hyper
+*.sql
 *.parquet
+*.svg
+*.dfx
+*.json
+*.dta
+*.shp
+*.dbf
+
+# SQLlite
+*.db
+*.db3
+*.s3db
+*.sl3
+*.ddb
+*.sqlite
+*.sqlite3
+
+# DuckDB Specific files
+*.ddb*
+*.duckdb*
+*.wal
+*.tmp/
 
 #nothing from these folders
 AI/*
 GIS/*
 Images/*
 Graphics/*
+Data/*
+Dataout/*

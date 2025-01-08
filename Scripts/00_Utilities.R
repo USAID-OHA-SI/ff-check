@@ -319,3 +319,37 @@ convert_ff2msd <- function(.df_ff, refs) {
               by = c("dataelementuid", "categoryoptioncombouid")) %>%
     relocate(value, .after = last_col())
 }
+
+#' @title Get Datim Data Elements SQLView
+#' @note: TODO: Replace datasetuid with datasetname
+#'
+datim_deview <- function(username,
+                         password,
+                         datasetuid,
+                         baseurl = NULL) {
+
+  df_deview <- datim_sqlviews(
+    username = username,
+    password = password,
+    view_name = "Data sets, elements and combos paramaterized",
+    dataset = TRUE,
+    query = list(
+      type = "variable",
+      params = list("dataSets" = datasetuid)
+    )
+  )
+
+  df_deview %>%
+    separate(dataset,
+             into = c("source", "category"),
+             sep = ": ",
+             remove = F) %>%
+    mutate(
+      type = case_when(
+        str_detect(source, " Targets$|.*Target.*") ~ "Targets",
+        TRUE ~ "Results")) %>%
+    select(dataset, source, category, type,
+           dataelementuid, code, dataelement, shortname, dataelementdesc,
+           categoryoptioncombouid, categoryoptioncombocode, categoryoptioncombo,
+           everything())
+}

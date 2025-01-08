@@ -4,7 +4,7 @@
 ##  PURPOSE: USAID/Nigeria - Flat files pre-validations
 ##  LICENCE: MIT
 ##  DATE:    2022-10-31
-##  UPDATED: 2023-11-01
+##  UPDATED: 2024-11-04
 ##
 
 # Installation ----
@@ -31,7 +31,7 @@
   library(lubridate)
   library(glue)
 
-  source("../MerQL/Scripts/00_Utilities.R")
+  #source("../MerQL/Scripts/00_Utilities.R")
   source("./Scripts/00_Utilities.R")
 
 # Credentials ----
@@ -50,7 +50,8 @@
 
   #loginToDATIM(config_path = file_secrets)
 
-  url <- "https://www.datim.org"
+  #url <- "https://www.datim.org"
+  url <- "https://final.datim.org"
 
   loginToDATIM(
     username = glamr::datim_user(),
@@ -70,9 +71,16 @@
   idScheme <- "id"
   dataElementIdScheme <- "id"
   orgUnitIdScheme <- "id"
-  expectedPeriod <- "2023Q4"
+  expectedPeriod <- "2024Q3"
 
 # Inputs files ----
+
+  # DIRs - Reference files
+
+  dir_pepfar <- si_path("path_datim")
+
+  file_mechs <- "./../../DATIM/Data-Import-and-Exchange-Resources" %>%
+    return_latest(".*Mechanisms partners.*.csv")
 
   # Processing Time Stamp
   t <- Sys.time()
@@ -95,7 +103,7 @@
   # Partners Submissions
   # NOTE: Downloads and note partners names
 
-  ff_subms <- c("FY24Q1_*")
+  ff_subms <- c("FY24Q4_*")
 
   # Flat fiels structures
   req_cols <- c("dataelement",
@@ -107,6 +115,8 @@
 
   # Download and move files to input directory
 
+
+
   dir_down <- Sys.getenv("USERNAME") %>%
     paste0("C:/users/", ., "/Downloads")
 
@@ -114,6 +124,8 @@
   #   dir_down <- "~/Downloads"
 
   # Move input files from download to input directory
+
+  #dir_down <- "../../PEPFAR/COUNTRIES/Nigeria/Data/FlatFiles/FY24Q3/Initial"
 
   list.files(path = dir_down,
              pattern = paste0(ff_subms, collapse = "|"),
@@ -156,25 +168,48 @@
 
   setdiff(req_cols, df_partners %>% names())
 
-  # df_partners <- df_partners %>%
-  #   rename(attributeoptioncombo = attroptioncombo)
+  df_partners <- df_partners %>%
+    #rename(attributeoptioncombo = attroptioncombo)
+    rename(orgunit = `org unit`, dataelement = dataelementid)
 
   # Reporting Periods - Calendar year
   df_partners %>% distinct(period)
 
+  df_partners %>%
+    distinct(period) %>%
+    pull() %>%
+    length() %>%
+    magrittr::equals(1)
+
+  df_partners %>%
+    distinct(period) %>%
+    pull() %>%
+    magrittr::is_in(expectedPeriod, .)
+
   # Partners
   df_partners %>% distinct(attributeoptioncombo)
+
+  partners_uid <- df_partners %>%
+    distinct(attributeoptioncombo) %>%
+    pull()
 
   # Reference IMs Table
 
   # Mechs doing flat files based Datim Import
 
-  df_mechs <- datim_mechs(cntry = cntry,
-                          agency = agency,
-                          username = datim_user(),
-                          password = datim_pwd())
+  # df_mechs <- datim_mechs(cntry = cntry,
+  #                         agency = agency,
+  #                         username = datim_user(),
+  #                         password = datim_pwd())
+
+  df_mechs <- file_mechs %>% read_csv()
+
+  df_mechs %>% glimpse()
 
   df_mechs <- df_mechs %>%
+    rename(prime_partner_name = partner,
+           mech_name = mechanism,
+           mech_code = code) %>%
     filter(!is.na(prime_partner_name),
            str_detect(prime_partner_name, "Dedupe|TBD", negate = TRUE),
            ymd(enddate) > ymd(today)) %>%
@@ -193,7 +228,10 @@
     append(paste0("KP CARE ", 1:2))
 
   df_mechs <- df_mechs %>%
-    filter(mech_shortname %in% ff_partners)
+    filter(uid %in% partners_uid)
+
+  # df_mechs <- df_mechs %>%
+  #   filter(mech_shortname %in% ff_partners)
 
   if (!any(pull(df_partners %>% distinct(attributeoptioncombo)) %in% df_mechs$uid)) {
     usethis::ui_warn("Unknown partner uid was detected")
@@ -225,8 +263,8 @@
 
   # Flag Invalid Partners
   if(!all(partners %in% df_mechs$uid)) {
-    usethis::ui_error(paste0("There are some invalid AttributeOptionCombo UIDs: ",
-                            paste(setdiff(partners, df_ims$uid), collapse = ", ")))
+    usethis::ui_warn(paste0("There are some invalid AttributeOptionCombo UIDs: ",
+                            paste(setdiff(partners, df_mechs$uid), collapse = ", ")))
   }
 
   # Flag Pending Partners
@@ -283,7 +321,7 @@
                                 password = datim_pwd(),
                                 view_name = "Data sets",
                                 dataset = TRUE,
-                                base_url = url)
+                                baseurl = url)
 
   df_datasets %>%
     distinct(name) %>%
@@ -293,12 +331,18 @@
     filter(str_detect(name, "^MER Results") & str_detect(name, ".*FY.*", negate = T))
 
   # MER Data Elements ----
+  datim_deview(username = datim_user(),
+               password = datim_pwd(),
+               datasetuid = "RJMs1rX3GA5"
+              # baseurl = url
+               )
+
   df_deview <- df_datasets %>%
-    pull(uid) %>%
+    pull(uid) %>% #first() %>%
     map_dfr(possibly(.f = ~datim_deview(username = datim_user(),
                                         password = datim_pwd(),
                                         datasetuid = .x,
-                                        base_url = url),
+                                        baseurl = url),
                      otherwise = NULL))
 
   #df_deview %>% write_csv(file = "./Dataout/DATIM - MER Results Data Elements.csv")
