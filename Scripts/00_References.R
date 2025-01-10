@@ -15,6 +15,7 @@
   library(gophr)
   library(glue)
   library(janitor)
+  library(fs)
   library(duckdb)
   library(dbplyr)
 
@@ -27,12 +28,19 @@
 
   dir_refs <- dir_data %>% file.path("References")
 
+  if (!dir_exists(dir_refs)) dir_create(dir_refs)
+
+  dir_ls(dir_refs)
+
   dir_mer <- glamr::si_path("path_msd")
   dir_ras <- glamr::si_path("path_raster")
   dir_shp <- glamr::si_path("path_vector")
   dir_datim <- glamr::si_path("path_datim")
 
   dir_datim_refs <- "DATIM/Data-Import-and-Exchange-Resources"
+  dir_datim_refs <-  dir_datim %>% file.path(dir_datim_refs)
+
+  if (!dir_exists(dir_datim_refs)) usethis::ui_stop("MISSING DIRECTORRY - {dir_datim_refs}")
 
 # Params
 
@@ -55,9 +63,7 @@
   file_db <- dir_refs %>%
     file.path("datim.duckdb")
 
-  dir_datim %>%
-    file.path(dir_datim_refs) %>%
-    list.files()
+  dir_datim_refs %>% list.files()
 
 # META
 
@@ -117,7 +123,93 @@
         countries
     ",
     "mechanism_clean" = "
-
+      SELECT
+        fiscal_year,
+        geolevel,
+        mechanism,
+        mech_code,
+        uid,
+        prime_partner_name,
+        prime_partner_uid,
+        funding_agency,
+        operatingunit,
+        startdate,
+        enddate,
+        LTRIM(RTRIM(REGEXP_REPLACE(mech_name, '^-[ ]+-[ ]+-[ ]+-|^-[ ]+-[ ]+-[ ]+|^-[ ]+-[ ]+-|^-[ ]+-[ ]+|^-[ ]+-|^-[ ]+|^[ ]+-[ ]+-[ ]+-|^[ ]+-[ ]+-[ ]+|^[ ]+-[ ]+-|^[ ]+-[ ]+|^[ ]+-|^[ ]+', ''))) AS mech_name,
+        award_number
+      FROM (
+        SELECT
+          fiscal_year,
+          geolevel,
+          mechanism,
+          mech_code,
+          uid,
+          prime_partner_name,
+          prime_partner_uid,
+          funding_agency,
+          operatingunit,
+          startdate,
+          enddate,
+          CASE
+            WHEN (NOT((award_number IS NULL))) THEN (REGEXP_REPLACE(mech_name, award_number, ''))
+            WHEN ((award_number IS NULL) AND REGEXP_MATCHES(mech_name, 'TBD')) THEN (REGEXP_REPLACE(mech_name, '- TBDaward.* - ', ''))
+            ELSE mech_name
+          END AS mech_name,
+          award_number
+        FROM (
+          SELECT
+            fiscal_year,
+            geolevel,
+            mechanism,
+            mech_code,
+            uid,
+            prime_partner_name,
+            prime_partner_uid,
+            funding_agency,
+            operatingunit,
+            startdate,
+            enddate,
+            mech_name,
+            LTRIM(RTRIM(REGEXP_REPLACE(award_number, '-', '', 'g'))) AS award_number
+          FROM (
+            SELECT
+              fiscal_year,
+              geolevel,
+              mechanism,
+              mech_code,
+              uid,
+              prime_partner_name,
+              prime_partner_uid,
+              funding_agency,
+              operatingunit,
+              startdate,
+              enddate,
+              REGEXP_REPLACE(mech_name, ' ', '', 'g') AS mech_name,
+              CASE
+                WHEN (REGEXP_MATCHES(prime_partner_name, '^TBD')) THEN NULL
+                ELSE (LTRIM(RTRIM(REGEXP_EXTRACT(mech_name, '- ([A-Za-z0-9]+) -'))))
+              END AS award_number
+            FROM (
+              SELECT q01.*, REGEXP_REPLACE(mechanism, mech_code, '') AS mech_name
+              FROM (
+                SELECT
+                  fiscal_year,
+                  geolevel,
+                  mechanism,
+                  code AS mech_code,
+                  uid,
+                  partner AS prime_partner_name,
+                  primeid AS prime_partner_uid,
+                  agency AS funding_agency,
+                  ou AS operatingunit,
+                  startdate,
+                  enddate
+                FROM mechanisms
+              ) q01
+            ) q01
+          ) q01
+        ) q01
+      ) q01
     "
   )
 
@@ -320,12 +412,38 @@
 
   conn %>% duck_tables()
 
+  ddb_sets_query <- conn %>%
+    dbSendQuery("SELECT * FROM duckdb_settings()")
+
+  ddb_sets <- ddb_sets_query %>%
+    dbFetch() %>%
+    as_tibble()
+
+  ddb_sets_query %>% dbClearResult()
+
+  ddb_sets %>%
+    filter(str_detect(name, "memory|schema"))
+
+  ram_max <- ddb_sets %>%
+    filter(name == "max_memory") %>%
+    pull(value) %>%
+    str_remove(" GiB$") %>%
+    as.integer()
+
+  ram_limit <- ram_max %>%
+    magrittr::divide_by(3) %>%
+    round()
+
+  conn %>% dbExecute(glue_sql("SET memory_limit = '{ram_limit}GB'", .con = conn))
+
 # LOAD DATA ====
 
-  ## Load source data
-  src_files <- dir_datim %>%
-    file.path(dir_datim_refs) %>%
-    map_sources()
+  dir_datim_refs %>% dir_ls()
+
+  ## Load source ref. data ----
+
+  ### 1 - Get Metadata
+  src_files <- dir_datim_refs %>% map_sources()
 
   src_meta <- src_files %>%
     map(function(.src){
@@ -333,9 +451,11 @@
     }) %>%
     bind_rows()
 
+  ### 2 - Read and load source data
   src_files %>%
     load_ref_data(.conn = conn, .sources = ., reset = T)
 
+  ### 3 - Validate
   duck_tables(.conn = conn)
 
   conn %>%
@@ -344,19 +464,19 @@
     any() %>%
     isTRUE()
 
-  ## Load Current FY PSNUxIM Results & Targets
+  ## Load Current FY PSNUxIM Results & Targets ----
   file_psnu %>%
     read_psd() %>%
     filter(fiscal_year == meta$curr_fy, country == cntry) %>%
     load_data(.conn = conn, .name = "psnuxim", .data = ., overwrite = TRUE)
 
-  ## Load Current FY SITExIM Results & Targets
+  ## Load Current FY SITExIM Results & Targets ----
   file_site %>%
     read_psd() %>%
     filter(fiscal_year == meta$curr_fy, country == cntry) %>%
     load_data(.conn = conn, .name = "sitexim", .data = ., overwrite = TRUE)
 
-  ## Load Current FY NAT SUBNAT Targets
+  ## Load Current FY NAT SUBNAT Targets ----
   file_nat %>%
     read_psd() %>%
     filter(country == cntry) %>%
@@ -364,7 +484,7 @@
 
 # MUNGE ====
 
-  ## Transform dataset in DuckDB to avoid reading the entire CSV into R's memory
+  ## Transform datasets in DuckDB to avoid reading the entire CSV into R's memory
   src_files %>%
     map(as_tibble) %>%
     bind_rows() %>%
@@ -414,7 +534,7 @@
     collect()
 
   ## Transform data in DuckDB with SQL
-  duckdb::tbl_query(conn, queries$levels_pivot) %>% glimpse()
+  duckdb::tbl_query(conn, glue_sql(queries$levels_pivot)) %>% glimpse()
 
   ## Orgunits
   tbl(conn, "orgunits") %>% glimpse()
@@ -441,6 +561,11 @@
 
   sep_chrs <- rev(sep_chrs)
 
+  sep_chrs2 <- sep_chrs %>%
+    str_replace_all("\\[:space:\\]", " ") %>%
+    paste0("^", ., collapse = "|") %>%
+    stringr::str_flatten()
+
   tbl(conn, "mechanisms") %>%
     dplyr::rename(
       mech_code = code,
@@ -455,25 +580,21 @@
       mech_name = stringr::str_replace_all(mech_name, "\n", ""),
       award_number = dplyr::case_when(
         stringr::str_detect(prime_partner_name, "^TBD") ~ NA_character_,
-        #TRUE ~ mech_name
-        # TRUE ~ stringr::str_extract(
-        #   TRUE ~
-        #   mech_name,
-        #   pattern = "(?<=-[:space:])[A-Z0-9]+(?=[:space:]-[:space:])"
-        # ),
-        TRUE ~ sql("REGEXP_EXTRACT(mech_name, '(?<=-[:space:])[A-Z0-9]+(?=[:space:]-[:space:])')")
+        TRUE ~ str_trim(dplyr::sql("REGEXP_EXTRACT(mech_name, '- ([A-Za-z0-9]+) -')"))
       ),
+      award_number = stringr::str_trim(stringr::str_remove_all(award_number, "-")),
       mech_name = dplyr::case_when(
         !is.na(award_number) ~ stringr::str_remove(mech_name, award_number),
+        is.na(award_number) & str_detect(mech_name, "TBD") ~ stringr::str_remove(mech_name, "- TBDaward.* - "),
         TRUE ~ mech_name
       ),
-      mech_name = stringr::str_remove(
-        mech_name,
-        stringr::str_flatten(paste0("^", sep_chrs), collapse = "|")
-      )
+      mech_name = stringr::str_trim(stringr::str_remove(mech_name, sep_chrs2))
     ) %>%
     dplyr::select(uid, mech_code, mech_name,
-                  award_number, mechanism, dplyr::everything()) %>% collect()
+                  award_number, mechanism,
+                  dplyr::everything()) %>%
+    arrange(desc(funding_agency), operatingunit, desc(startdate), mech_name) %>%
+    collect()
 
 # CLOSE ====
 
