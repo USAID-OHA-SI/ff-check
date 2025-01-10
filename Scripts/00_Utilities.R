@@ -277,22 +277,79 @@ update_orghierarchy <- function(.df_orgview, levels) {
       rename(orgunit_type = orgunit_label)
 }
 
+
+#' @title Summarise outputs
+#'
+#'
+merge_outputs <- function(.dir, ptime, otype = "messages") {
+
+  if (!fs::is_dir(.dir)) stop("Invalid files directory")
+
+  ## Summarise messages
+  list.files(.dir,
+             pattern = paste0(".*", ptime, " - ", otype, ".csv$"),
+             full.names = TRUE) %>%
+    map_dfr(function(.x){
+      read_csv(.x) %>%
+        mutate(im = str_extract(basename(.x), paste0(".*(?= - ", ptime, ")"))) %>%
+        relocate(im, .before = 1)
+    }) %>%
+    write_csv(
+      file = paste0(.dir, "USAID Partners - ", ptime, " - ", otype, " summary.csv"),
+      na = ""
+    )
+}
+
 #' @title Convert Flat File to MSD
 #'
 #'
 convert_ff2msd <- function(.df_ff, refs) {
 
   .df_ff %>%
-    clean_names() %>%
-    rename(orgunit_uid = org_unit,
-           attributeoptioncombouid = attribute_option_combo,
-           dataelementuid = data_element,
-           categoryoptioncombouid = category_option_combo) %>%
-    left_join(refs$orgview, by = "orgunit_uid") %>%
+    rename_with(tolower) %>%
+    rename(orgunituid = orgunit,
+           attributeoptioncombouid = attributeoptioncombo,
+           dataelementuid = dataelement,
+           categoryoptioncombouid = categoryoptioncombo) %>%
+    left_join(refs$orgview, by = "orgunituid") %>%
     relocate(attributeoptioncombouid, .after = last_col()) %>%
     left_join(refs$aocview, by = c("attributeoptioncombouid" = "mech_uid")) %>%
     relocate(dataelementuid, categoryoptioncombouid, .after = last_col()) %>%
     left_join(refs$deview,
               by = c("dataelementuid", "categoryoptioncombouid")) %>%
     relocate(value, .after = last_col())
+}
+
+#' @title Get Datim Data Elements SQLView
+#' @note: TODO: Replace datasetuid with datasetname
+#'
+datim_deview <- function(username,
+                         password,
+                         datasetuid,
+                         baseurl = NULL) {
+
+  df_deview <- datim_sqlviews(
+    username = username,
+    password = password,
+    view_name = "Data sets, elements and combos paramaterized",
+    dataset = TRUE,
+    query = list(
+      type = "variable",
+      params = list("dataSets" = datasetuid)
+    )
+  )
+
+  df_deview %>%
+    separate(dataset,
+             into = c("source", "category"),
+             sep = ": ",
+             remove = F) %>%
+    mutate(
+      type = case_when(
+        str_detect(source, " Targets$|.*Target.*") ~ "Targets",
+        TRUE ~ "Results")) %>%
+    select(dataset, source, category, type,
+           dataelementuid, code, dataelement, shortname, dataelementdesc,
+           categoryoptioncombouid, categoryoptioncombocode, categoryoptioncombo,
+           everything())
 }
